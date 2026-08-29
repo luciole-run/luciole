@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Luciole — courir et marcher sans peur</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+  :root{
+    --bg:#ffffff; --panel:#ffffff; --text:#1a1a2e; --muted:#6b7280;
+    --accent:#7c3aed; --accent2:#f59e0b; --border:#e5e7eb;
+    --lit:#22c55e; --unlit:#ef4444; --unknown:#9ca3af;
+  }
+  body.night{
+    --bg:#0f1117; --panel:#171923; --text:#e5e7eb; --muted:#9ca3af;
+    --border:#2d3142;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text)}
+  #map{position:absolute;inset:0}
+  .panel{
+    position:absolute;top:12px;left:12px;z-index:1000;width:300px;max-width:calc(100vw - 24px);
+    background:var(--panel);border:1px solid var(--border);border-radius:14px;
+    box-shadow:0 8px 30px rgba(0,0,0,.18);padding:14px;max-height:calc(100vh - 24px);overflow:auto;
+  }
+  .panel h1{font-size:19px;margin:0 0 2px;display:flex;align-items:center;gap:8px}
+  .panel h1 .dot{width:10px;height:10px;border-radius:50%;background:var(--accent2);box-shadow:0 0 8px var(--accent2)}
+  .tagline{font-size:12px;color:var(--muted);margin:0 0 10px}
+  .row{display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap}
+  button{
+    border:1px solid var(--border);background:var(--panel);color:var(--text);
+    border-radius:9px;padding:7px 10px;font-size:12.5px;cursor:pointer;flex:1;min-width:0;
+  }
+  button:hover{border-color:var(--accent)}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+  button.active{background:var(--accent);border-color:var(--accent);color:#fff}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  select,input[type=number]{
+    border:1px solid var(--border);background:var(--panel);color:var(--text);
+    border-radius:8px;padding:6px;font-size:12.5px;width:100%;
+  }
+  label{font-size:11px;color:var(--muted);display:block;margin:6px 0 3px;text-transform:uppercase;letter-spacing:.04em}
+  .section{border-top:1px solid var(--border);margin-top:10px;padding-top:10px}
+  .section h2{font-size:12px;margin:0 0 6px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+  .legend{font-size:12px;line-height:1.8}
+  .swatch{display:inline-block;width:22px;height:4px;border-radius:2px;vertical-align:middle;margin-right:7px}
+  .lampdot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#fbbf24;box-shadow:0 0 5px #fbbf24;vertical-align:middle;margin:0 10px 0 7px}
+  #status{font-size:12px;color:var(--muted);min-height:16px;margin-top:6px}
+  #routeStats{font-size:12.5px;line-height:1.6;display:none;background:rgba(124,58,237,.08);border-radius:9px;padding:8px;margin-top:8px}
+  .toast{
+    position:absolute;bottom:20px;left:50%;transform:translateX(-50%);z-index:1200;
+    background:var(--text);color:var(--bg);padding:9px 16px;border-radius:10px;font-size:13px;
+    opacity:0;transition:opacity .3s;pointer-events:none;max-width:85vw;text-align:center;
+  }
+  .toast.show{opacity:.95}
+  .switch{display:flex;align-items:center;justify-content:space-between;font-size:13px;margin-top:2px}
+  .reportbtns button{font-size:11.5px;padding:6px 4px}
+  .hint{font-size:11px;color:var(--muted);margin-top:4px}
+  .collapse-btn{position:absolute;top:10px;right:10px;border:none;background:none;font-size:16px;flex:none;padding:2px 6px}
+  body.night .leaflet-layer.basemap-light{display:none}
+  .leaflet-popup-content{font-size:13px}
+  a{color:var(--accent)}
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<div class="panel" id="panel">
+  <button class="collapse-btn" id="collapseBtn" title="collapse">−</button>
+  <h1><span class="dot"></span>Luciole</h1>
+  <p class="tagline">Voir quelles rues sont éclairées. Bouger sans peur.</p>
+
+  <div class="switch">
+    <span>🌙 Mode nuit</span>
+    <button id="nightBtn" style="flex:none;width:auto">Auto</button>
+  </div>
+
+  <div class="section" style="border-top-color:#fca5a5">
+    <div class="row">
+      <button id="sosBtn" style="background:#dc2626;border-color:#dc2626;color:#fff;font-weight:700;font-size:14px;padding:10px">🚨 Je me sens en danger — alerter mon contact</button>
+    </div>
+    <label>Contact de confiance (numéro de téléphone)</label>
+    <input type="tel" id="contactPhone" placeholder="+1 514 …" style="border:1px solid var(--border);background:var(--panel);color:var(--text);border-radius:8px;padding:6px;font-size:12.5px;width:100%">
+    <div class="hint">Envoie ta position en direct par texto. En danger immédiat, appelle le 911.</div>
+  </div>
+
+  <div class="section">
+    <h2>1 · Carte de l’éclairage</h2>
+    <div class="row">
+      <button class="primary" id="loadBtn">Charger l’éclairage de cette zone</button>
+    </div>
+    <div class="legend">
+      <span class="swatch" style="background:var(--lit)"></span>Rue / sentier éclairé<br>
+      <span class="swatch" style="background:var(--unlit)"></span>Noté non éclairé<br>
+      <span class="swatch" style="background:var(--unknown)"></span>Pas encore de données<br>
+      <span class="lampdot"></span>Lampadaire
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button id="havenBtn">🏪 Refuges : OUI</button>
+    </div>
+    <div class="hint">Refuges = endroits où entrer au besoin : dépanneurs, pharmacies, stations-service, entrées de métro, police et casernes.</div>
+    <div id="status"></div>
+  </div>
+
+  <div class="section">
+    <h2>2 · Itinéraire sûr</h2>
+    <div class="row">
+      <button id="startBtn">📍 Point de départ</button>
+      <button id="endBtn">🏁 Destination</button>
+    </div>
+    <div class="row">
+      <button id="locateBtn">Ma position comme départ</button>
+    </div>
+    <label>Priorité</label>
+    <select id="priority">
+      <option value="4" selected>Le plus sûr — rues éclairées et passantes</option>
+      <option value="1.5">Équilibré</option>
+      <option value="0">Le plus court</option>
+    </select>
+    <label>Rythme (min / km)</label>
+    <input type="number" id="pace" value="6.5" min="3" max="20" step="0.5">
+    <div id="routeStats"></div>
+    <div class="row" style="margin-top:8px">
+      <button id="shareBtn" disabled>📤 Partager ma course</button>
+      <button id="clearRouteBtn">Effacer</button>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>3 · Signalements communautaires</h2>
+    <div class="row reportbtns">
+      <button data-type="dark" title="Coin sombre">🌑 Coin sombre</button>
+      <button data-type="broken" title="Lampadaire brisé">💡 Lampadaire brisé</button>
+    </div>
+    <div class="row reportbtns">
+      <button data-type="unsafe" title="Insécurité">⚠️ Sentiment d’insécurité</button>
+      <button data-type="safe" title="Rassurant">✅ Rassurant</button>
+    </div>
+    <div class="row reportbtns">
+      <button data-type="incident" title="Incident">🚨 Incident (suivie / harcelée)</button>
+    </div>
+    <div class="hint">Choisis un type, puis tape sur la carte. Les signalements restent sur cet appareil et influencent les itinéraires sûrs.</div>
+    <div class="row" style="margin-top:8px">
+      <button id="exportBtn">⬇️ Exporter</button>
+      <button id="importBtn">⬆️ Fusionner</button>
+    </div>
+    <div class="hint">En équipe? Chacune exporte son fichier, puis fusionne celui de l’autre — les doublons sont gérés.</div>
+    <input type="file" id="importFile" accept=".json" style="display:none">
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+/* ============ Luciole prototype ============
+   Data: OpenStreetMap via Overpass API (lit=* tags, street lamps).
+   Routing: client-side Dijkstra weighted by a per-street safety score.
+*/
+
+// ---------- map ----------
+const map = L.map('map', {zoomControl:true}).setView([45.5185, -73.6050], 15); // Outremont, Montréal
+const lightTiles = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+  {maxZoom:19, attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>'});
+const darkTiles = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+  {maxZoom:19, attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>'});
+lightTiles.addTo(map);
+
+const streetLayer = L.layerGroup().addTo(map);
+const lampLayer   = L.layerGroup().addTo(map);
+const havenLayer  = L.layerGroup().addTo(map);
+const reportLayer = L.layerGroup().addTo(map);
+const routeLayer  = L.layerGroup().addTo(map);
+
+// ---------- state ----------
+let ways = [];            // {id, tags, nodeIds:[], coords:[[lat,lng]], score}
+let nodePos = new Map();  // nodeId -> [lat,lng]
+let lamps = [];           // [lat,lng]
+let havens = [];          // {lat, lng, kind, name}
+let lampGrid = new Map(); // spatial hash for lamps
+let graph = new Map();    // nodeId -> [{to, dist, score}]
+let startNode = null, endNode = null, startMarker = null, endMarker = null;
+let pickMode = null;      // 'start' | 'end' | report type
+let lastRoute = null;     // {coords, distM, litPct}
+let reports = JSON.parse(localStorage.getItem('luciole_reports') || '[]');
+
+// ---------- helpers ----------
+const $ = id => document.getElementById(id);
+function toast(msg, ms=2600){ const t=$('toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove('show'), ms); }
+function status(msg){ $('status').textContent = msg; }
+function haversine(a, b){
+  const R=6371000, toRad=x=>x*Math.PI/180;
+  const dLat=toRad(b[0]-a[0]), dLng=toRad(b[1]-a[1]);
+  const s=Math.sin(dLat/2)**2 + Math.cos(toRad(a[0]))*Math.cos(toRad(b[0]))*Math.sin(dLng/2)**2;
+  return 2*R*Math.asin(Math.sqrt(s));
+}
+function gridKey(lat,lng){ return Math.round(lat/0.0006)+'_'+Math.round(lng/0.0006); } // ~65m cells
+function lampNear(lat,lng,radM){
+  const k0=Math.round(lat/0.0006), k1=Math.round(lng/0.0006);
+  for(let i=-1;i<=1;i++) for(let j=-1;j<=1;j++){
+    const cell=lampGrid.get((k0+i)+'_'+(k1+j));
+    if(cell) for(const p of cell) if(haversine([lat,lng],p)<=radM) return true;
+  }
+  return false;
+}
+
+// ---------- safety scoring ----------
+const REPORT_META = {
+  dark:   {label:'Coin sombre',    icon:'🌑', delta:-20},
+  broken: {label:'Lampadaire brisé', icon:'💡', delta:-15},
+  unsafe: {label:'Sentiment d’insécurité',  icon:'⚠️', delta:-25},
+  safe:   {label:'Rassurant',   icon:'✅', delta:+12},
+  incident: {label:'Incident (suivie / harcelée)', icon:'🚨', delta:-30},
+};
+function scoreWay(w){
+  const t = w.tags || {};
+  let s;
+  if (t.lit === 'yes' || t.lit === '24/7' || t.lit === 'automatic') s = 85;
+  else if (t.lit === 'no') s = 25;
+  else s = 50; // unknown
+  const hw = t.highway || '';
+  if (['primary','secondary','tertiary'].includes(hw)) s += 5;        // busier: more eyes on the street
+  else if (hw === 'residential' || hw === 'living_street') s += 3;
+  else if (['footway','path','track','steps'].includes(hw)) s -= 10;  // isolated paths at night
+  else if (hw === 'service') s -= 8;                                  // alleys
+  if (t.lit === undefined && w.coords.length){
+    const mid = w.coords[Math.floor(w.coords.length/2)];
+    if (lampNear(mid[0], mid[1], 45)) s += 20;                        // lamp nearby → likely lit
+  }
+  // community reports near the way midpoint
+  if (reports.length && w.coords.length){
+    const mid = w.coords[Math.floor(w.coords.length/2)];
+    for (const r of reports){
+      if (haversine(mid, [r.lat, r.lng]) < 80) s += REPORT_META[r.type].delta;
+    }
+  }
+  return Math.max(5, Math.min(95, s));
+}
+function litCategory(t){
+  if (!t) return 'unknown';
+  if (t.lit === 'yes' || t.lit === '24/7' || t.lit === 'automatic') return 'lit';
+  if (t.lit === 'no') return 'unlit';
+  return 'unknown';
+}
+
+// ---------- Overpass loading ----------
+const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+async function loadArea(){
+  if (map.getZoom() < 14){ toast('Zoome un peu plus, puis charge (un quartier à la fois).'); return; }
+  const b = map.getBounds();
+  const bbox = [b.getSouth(), b.getWest(), b.getNorth(), b.getEast()].map(x=>x.toFixed(5)).join(',');
+  const q = `[out:json][timeout:40];
+(
+  way["highway"~"^(primary|secondary|tertiary|unclassified|residential|living_street|pedestrian|footway|path|cycleway|service|track|steps)$"](${bbox});
+  node["highway"="street_lamp"](${bbox});
+  node["amenity"~"^(pharmacy|fuel|police|fire_station|hospital)$"](${bbox});
+  way["amenity"~"^(pharmacy|fuel|police|fire_station|hospital)$"](${bbox});
+  node["shop"="convenience"](${bbox});
+  way["shop"="convenience"](${bbox});
+  node["railway"="subway_entrance"](${bbox});
+);
+out body geom;`;
+  $('loadBtn').disabled = true; status('Chargement des données OpenStreetMap…');
+  let data = null, err = null;
+  for (const url of OVERPASS){
+    try {
+      const res = await fetch(url, {method:'POST', body:'data='+encodeURIComponent(q),
+        headers:{'Content-Type':'application/x-www-form-urlencoded'}});
+      if (!res.ok) throw new Error('HTTP '+res.status);
+      data = await res.json(); break;
+    } catch(e){ err = e; }
+  }
+  $('loadBtn').disabled = false;
+  if (!data){ status('Impossible de charger les données ('+(err&&err.message)+'). Réessaie dans une minute.'); return; }
+  ingest(data);
+}
+const HAVEN_META = {
+  pharmacy:        {icon:'💊', label:'Pharmacie'},
+  fuel:            {icon:'⛽', label:'Station-service'},
+  police:          {icon:'🚓', label:'Poste de police'},
+  fire_station:    {icon:'🚒', label:'Caserne de pompiers'},
+  hospital:        {icon:'🏥', label:'Hôpital'},
+  convenience:     {icon:'🏪', label:'Dépanneur'},
+  subway_entrance: {icon:'Ⓜ️', label:'Entrée de métro'},
+};
+function havenKind(tags){
+  if (!tags) return null;
+  if (tags.amenity && HAVEN_META[tags.amenity]) return tags.amenity;
+  if (tags.shop === 'convenience') return 'convenience';
+  if (tags.railway === 'subway_entrance') return 'subway_entrance';
+  return null;
+}
+function ingest(data){
+  ways = []; lamps = []; havens = []; nodePos = new Map(); lampGrid = new Map();
+  for (const el of data.elements){
+    const hk = havenKind(el.tags);
+    if (hk){
+      let lat, lng;
+      if (el.type === 'node'){ lat = el.lat; lng = el.lon; }
+      else if (el.geometry && el.geometry.length){
+        lat = el.geometry.reduce((a,g)=>a+g.lat,0)/el.geometry.length;
+        lng = el.geometry.reduce((a,g)=>a+g.lon,0)/el.geometry.length;
+      }
+      if (lat !== undefined) havens.push({lat, lng, kind:hk, name:(el.tags.name||HAVEN_META[hk].label), hours:el.tags.opening_hours||null});
+      continue;
+    }
+    if (el.type === 'node' && el.tags && el.tags.highway === 'street_lamp'){
+      lamps.push([el.lat, el.lon]);
+    } else if (el.type === 'way' && el.geometry && el.tags && el.tags.highway){
+      const coords = el.geometry.map(g=>[g.lat, g.lon]);
+      ways.push({id:el.id, tags:el.tags||{}, nodeIds:el.nodes||[], coords, score:50});
+      if (el.nodes) el.nodes.forEach((nid,i)=>{ if(coords[i]) nodePos.set(nid, coords[i]); });
+    }
+  }
+  for (const p of lamps){
+    const k = gridKey(p[0], p[1]);
+    if (!lampGrid.has(k)) lampGrid.set(k, []);
+    lampGrid.get(k).push(p);
+  }
+  rescoreAndRender();
+  renderHavens();
+  buildGraph();
+  const lit = ways.filter(w=>litCategory(w.tags)==='lit').length;
+  const unlit = ways.filter(w=>litCategory(w.tags)==='unlit').length;
+  status(`${ways.length} segments de rue · ${lit} éclairés · ${unlit} non éclairés · ${lamps.length} lampadaires · ${havens.length} refuges. Gris = pas encore cartographié — aide en signalant!`);
+}
+let havensOn = true;
+function renderHavens(){
+  havenLayer.clearLayers();
+  if (!havensOn) return;
+  for (const h of havens){
+    const m = L.marker([h.lat, h.lng], {
+      icon: L.divIcon({className:'', html:`<div style="font-size:15px;line-height:1;filter:drop-shadow(0 1px 2px rgba(0,0,0,.45))">${HAVEN_META[h.kind].icon}</div>`, iconSize:[18,18], iconAnchor:[9,9]}),
+      opacity: 0.95
+    });
+    m.bindPopup(`<b>${HAVEN_META[h.kind].icon} ${h.name}</b><br>${HAVEN_META[h.kind].label}${h.hours ? '<br>Heures : '+h.hours : ''}<br><span style="color:#888">Un endroit où entrer au besoin</span>`);
+    havenLayer.addLayer(m);
+  }
+}
+function rescoreAndRender(){
+  streetLayer.clearLayers(); lampLayer.clearLayers();
+  const css = getComputedStyle(document.body);
+  const colors = {lit:'#22c55e', unlit:'#ef4444', unknown:'#9ca3af'};
+  for (const w of ways){
+    w.score = scoreWay(w);
+    const cat = litCategory(w.tags);
+    const line = L.polyline(w.coords, {
+      color: colors[cat], weight: cat==='unknown'?2.5:4, opacity: cat==='unknown'?0.55:0.85,
+      dashArray: cat==='unknown' ? '5,7' : null
+    });
+    const name = w.tags.name || (w.tags.highway ? w.tags.highway.replace('_',' ') : 'sentier');
+    line.bindPopup(`<b>${name}</b><br>Éclairage : ${cat==='lit'?'✅ éclairée':cat==='unlit'?'❌ non éclairée':'❔ inconnu'}<br>Indice de sécurité : <b>${w.score}</b>/100`);
+    streetLayer.addLayer(line);
+  }
+  for (const p of lamps){
+    lampLayer.addLayer(L.circleMarker(p, {radius:2.5, color:'#b45309', weight:1, fillColor:'#fbbf24', fillOpacity:0.95}));
+  }
+}
+
+// ---------- routing graph ----------
+function buildGraph(){
+  graph = new Map();
+  const walkable = w => w.tags.highway !== 'motorway';
+  for (const w of ways){
+    if (!walkable(w) || w.nodeIds.length < 2) continue;
+    for (let i=0;i<w.nodeIds.length-1;i++){
+      const a=w.nodeIds[i], b=w.nodeIds[i+1];
+      const pa=nodePos.get(a), pb=nodePos.get(b);
+      if (!pa || !pb) continue;
+      const d = haversine(pa, pb);
+      if (!graph.has(a)) graph.set(a, []);
+      if (!graph.has(b)) graph.set(b, []);
+      graph.get(a).push({to:b, dist:d, way:w});
+      graph.get(b).push({to:a, dist:d, way:w});
+    }
+  }
+}
+function nearestNode(latlng){
+  let best=null, bd=Infinity;
+  for (const [nid] of graph){
+    const p = nodePos.get(nid);
+    const d = haversine([latlng.lat, latlng.lng], p);
+    if (d < bd){ bd = d; best = nid; }
+  }
+  return bd < 300 ? best : null;
+}
+function dijkstra(src, dst, k){
+  // cost = dist * (1 + k * (100 - safety)/100)
+  const dist = new Map(), prev = new Map(), visited = new Set();
+  const pq = [[0, src]];
+  dist.set(src, 0);
+  while (pq.length){
+    let bi=0; for (let i=1;i<pq.length;i++) if (pq[i][0]<pq[bi][0]) bi=i;
+    const [d, u] = pq.splice(bi,1)[0];
+    if (visited.has(u)) continue;
+    visited.add(u);
+    if (u === dst) break;
+    for (const e of (graph.get(u)||[])){
+      const w = e.dist * (1 + k * (100 - e.way.score)/100);
+      const nd = d + w;
+      if (nd < (dist.get(e.to) ?? Infinity)){
+        dist.set(e.to, nd); prev.set(e.to, {node:u, edge:e});
+        pq.push([nd, e.to]);
+      }
+    }
+  }
+  if (!prev.has(dst) && src!==dst) return null;
+  const path=[], edges=[];
+  let cur = dst;
+  while (cur !== src){
+    const p = prev.get(cur); if (!p) return null;
+    path.push(cur); edges.push(p.edge); cur = p.node;
+  }
+  path.push(src); path.reverse(); edges.reverse();
+  return {path, edges};
+}
+function computeRoute(){
+  if (startNode==null || endNode==null) return;
+  if (!graph.size){ toast('Charge d’abord l’éclairage (étape 1).'); return; }
+  const k = parseFloat($('priority').value);
+  const r = dijkstra(startNode, endNode, k);
+  routeLayer.clearLayers();
+  if (startMarker) routeLayer.addLayer(startMarker);
+  if (endMarker) routeLayer.addLayer(endMarker);
+  if (!r){ toast('Aucun itinéraire trouvé — charge une zone plus grande.'); return; }
+  const coords = r.path.map(n=>nodePos.get(n));
+  let distM=0, litM=0;
+  for (const e of r.edges){
+    distM += e.dist;
+    if (litCategory(e.way.tags)==='lit' || e.way.score>=70) litM += e.dist;
+  }
+  L.polyline(coords, {color:'#7c3aed', weight:7, opacity:0.5}).addTo(routeLayer);
+  L.polyline(coords, {color:'#a78bfa', weight:3, opacity:0.95}).addTo(routeLayer);
+  const pace = parseFloat($('pace').value)||6.5;
+  const mins = Math.round(distM/1000*pace);
+  const litPct = distM ? Math.round(litM/distM*100) : 0;
+  lastRoute = {coords, distM, mins, litPct};
+  $('routeStats').style.display='block';
+  $('routeStats').innerHTML =
+    `<b>${(distM/1000).toFixed(2)} km</b> · ~${mins} min à ton rythme<br>` +
+    `💡 <b>${litPct}%</b> de l’itinéraire sur des rues éclairées ou bien notées`;
+  $('shareBtn').disabled = false;
+}
+
+// ---------- pick / report interactions ----------
+function setPick(mode){
+  pickMode = (pickMode===mode) ? null : mode;
+  document.querySelectorAll('#startBtn,#endBtn,.reportbtns button').forEach(b=>b.classList.remove('active'));
+  if (pickMode==='start') $('startBtn').classList.add('active');
+  else if (pickMode==='end') $('endBtn').classList.add('active');
+  else if (pickMode) document.querySelector(`.reportbtns button[data-type="${pickMode}"]`)?.classList.add('active');
+  map.getContainer().style.cursor = pickMode ? 'crosshair' : '';
+}
+map.on('click', e=>{
+  if (!pickMode) return;
+  if (pickMode==='start' || pickMode==='end'){
+    if (!graph.size){ toast('Charge d’abord l’éclairage (étape 1).'); setPick(null); return; }
+    const n = nearestNode(e.latlng);
+    if (n==null){ toast('Trop loin d’une rue cartographiée — tape plus près d’une rue.'); return; }
+    const p = nodePos.get(n);
+    if (pickMode==='start'){
+      startNode=n;
+      if (startMarker) routeLayer.removeLayer(startMarker);
+      startMarker = L.marker(p, {title:'Départ'}).bindPopup('Départ'); routeLayer.addLayer(startMarker);
+    } else {
+      endNode=n;
+      if (endMarker) routeLayer.removeLayer(endMarker);
+      endMarker = L.marker(p, {title:'Arrivée'}).bindPopup('Arrivée'); routeLayer.addLayer(endMarker);
+    }
+    setPick(null);
+    computeRoute();
+  } else {
+    addReport(pickMode, e.latlng.lat, e.latlng.lng);
+    setPick(null);
+  }
+});
+function addReport(type, lat, lng){
+  reports.push({type, lat, lng, at: Date.now()});
+  localStorage.setItem('luciole_reports', JSON.stringify(reports));
+  renderReports(); rescoreAndRender();
+  toast(REPORT_META[type].icon+' Signalement enregistré — merci. Il influence maintenant les itinéraires ici.');
+  if (lastRoute) computeRoute();
+}
+function renderReports(){
+  reportLayer.clearLayers();
+  reports.forEach((r,idx)=>{
+    const m = L.marker([r.lat, r.lng], {
+      icon: L.divIcon({className:'', html:`<div style="font-size:20px;text-shadow:0 1px 3px rgba(0,0,0,.4)">${REPORT_META[r.type].icon}</div>`, iconSize:[22,22], iconAnchor:[11,11]})
+    });
+    const when = new Date(r.at).toLocaleDateString();
+    m.bindPopup(`<b>${REPORT_META[r.type].icon} ${REPORT_META[r.type].label}</b><br><span style="color:#888">${when}</span><br><a href="#" onclick="deleteReport(${idx});return false;">Retirer</a>`);
+    reportLayer.addLayer(m);
+  });
+}
+window.deleteReport = function(idx){
+  reports.splice(idx,1);
+  localStorage.setItem('luciole_reports', JSON.stringify(reports));
+  renderReports(); rescoreAndRender();
+  map.closePopup();
+};
+
+// ---------- share my run ----------
+$('shareBtn').addEventListener('click', async ()=>{
+  if (!lastRoute) return;
+  const s = lastRoute.coords[0], e = lastRoute.coords[lastRoute.coords.length-1];
+  const eta = new Date(Date.now()+lastRoute.mins*60000);
+  const text = `🏃 Je pars courir avec Luciole!\n`+
+    `Itinéraire : ${(lastRoute.distM/1000).toFixed(2)} km, ${lastRoute.litPct}% sur rues éclairées.\n`+
+    `Je pars maintenant — attends-moi vers ${eta.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}.\n`+
+    `Départ : https://www.openstreetmap.org/?mlat=${s[0].toFixed(5)}&mlon=${s[1].toFixed(5)}#map=16/${s[0].toFixed(5)}/${s[1].toFixed(5)}\n`+
+    `Arrivée : https://www.openstreetmap.org/?mlat=${e[0].toFixed(5)}&mlon=${e[1].toFixed(5)}#map=16/${e[0].toFixed(5)}/${e[1].toFixed(5)}`;
+  if (navigator.share){
+    try { await navigator.share({title:'Mon plan de course', text}); return; } catch(_){}
+  }
+  try { await navigator.clipboard.writeText(text); toast('Plan de course copié — colle-le à une personne de confiance.'); }
+  catch(_){ prompt('Copie ton plan de course :', text); }
+});
+
+// ---------- night mode ----------
+let nightMode = 'auto'; // 'auto' | 'on' | 'off'
+function applyNight(){
+  const h = new Date().getHours();
+  const dark = nightMode==='on' || (nightMode==='auto' && (h>=19 || h<7));
+  document.body.classList.toggle('night', dark);
+  if (dark){ if (map.hasLayer(lightTiles)) map.removeLayer(lightTiles); if (!map.hasLayer(darkTiles)) darkTiles.addTo(map); }
+  else { if (map.hasLayer(darkTiles)) map.removeLayer(darkTiles); if (!map.hasLayer(lightTiles)) lightTiles.addTo(map); }
+  $('nightBtn').textContent = nightMode==='auto' ? 'Auto' : (nightMode==='on' ? 'On' : 'Off');
+}
+$('nightBtn').addEventListener('click', ()=>{
+  nightMode = nightMode==='auto' ? 'on' : nightMode==='on' ? 'off' : 'auto';
+  applyNight();
+});
+applyNight();
+
+// ---------- wire up ----------
+$('loadBtn').addEventListener('click', loadArea);
+$('havenBtn').addEventListener('click', ()=>{
+  havensOn = !havensOn;
+  $('havenBtn').textContent = '🏪 Refuges : ' + (havensOn ? 'OUI' : 'NON');
+  renderHavens();
+});
+$('startBtn').addEventListener('click', ()=>setPick('start'));
+$('endBtn').addEventListener('click', ()=>setPick('end'));
+$('priority').addEventListener('change', computeRoute);
+$('pace').addEventListener('change', ()=>{ if(lastRoute) computeRoute(); });
+$('clearRouteBtn').addEventListener('click', ()=>{
+  routeLayer.clearLayers(); startNode=endNode=null; startMarker=endMarker=null; lastRoute=null;
+  $('routeStats').style.display='none'; $('shareBtn').disabled=true;
+});
+document.querySelectorAll('.reportbtns button').forEach(b=>{
+  b.addEventListener('click', ()=>setPick(b.dataset.type));
+});
+$('locateBtn').addEventListener('click', ()=>{
+  if (!navigator.geolocation){ toast('Géolocalisation non disponible dans ce navigateur.'); return; }
+  navigator.geolocation.getCurrentPosition(pos=>{
+    const ll = L.latLng(pos.coords.latitude, pos.coords.longitude);
+    map.setView(ll, 15);
+    if (graph.size){
+      const n = nearestNode(ll);
+      if (n!=null){
+        startNode=n;
+        if (startMarker) routeLayer.removeLayer(startMarker);
+        startMarker = L.marker(nodePos.get(n)).bindPopup('Départ (toi)');
+        routeLayer.addLayer(startMarker);
+        toast('Départ fixé à ta position. Choisis maintenant ta destination.');
+        computeRoute();
+      }
+    } else toast('Centré sur toi — charge maintenant l’éclairage (étape 1).');
+  }, ()=>toast('Impossible d’obtenir ta position.'));
+});
+$('collapseBtn').addEventListener('click', ()=>{
+  const p=$('panel');
+  const collapsed = p.dataset.collapsed==='1';
+  p.dataset.collapsed = collapsed?'0':'1';
+  [...p.children].forEach(c=>{ if(c.id!=='collapseBtn' && c.tagName!=='H1') c.style.display = collapsed?'':'none'; });
+  $('collapseBtn').textContent = collapsed?'−':'+';
+});
+
+// ---------- SOS: alert trusted contact ----------
+$('contactPhone').value = localStorage.getItem('luciole_contact') || '';
+$('contactPhone').addEventListener('change', ()=>{
+  localStorage.setItem('luciole_contact', $('contactPhone').value.trim());
+  toast('Contact de confiance enregistré sur cet appareil.');
+});
+async function sendSOS(lat, lng){
+  const link = `https://www.openstreetmap.org/?mlat=${lat.toFixed(5)}&mlon=${lng.toFixed(5)}#map=17/${lat.toFixed(5)}/${lng.toFixed(5)}`;
+  const msg = `🚨 Je ne me sens pas en sécurité. Voici ma position en direct : ${link} — viens vérifier que je vais bien, stp. (envoyé via Luciole)`;
+  const phone = ($('contactPhone').value || '').trim();
+  if (phone){
+    // sms: link opens the phone's messaging app with the text prefilled
+    window.location.href = 'sms:' + phone.replace(/[^+\d]/g,'') + '?&body=' + encodeURIComponent(msg);
+  } else if (navigator.share){
+    try { await navigator.share({text: msg}); } catch(_){}
+  } else {
+    try { await navigator.clipboard.writeText(msg); toast('Alerte copiée — colle-la à une personne de confiance.'); }
+    catch(_){ prompt('Envoie ceci à une personne de confiance :', msg); }
+  }
+  // offer to log the spot so the map learns from it
+  setTimeout(()=>{
+    if (confirm('Marquer aussi cet endroit comme incident sur la carte (anonyme)?')){
+      addReport('incident', lat, lng);
+    }
+  }, 400);
+}
+$('sosBtn').addEventListener('click', ()=>{
+  if (!navigator.geolocation){
+    const c = map.getCenter(); sendSOS(c.lat, c.lng); return;
+  }
+  toast('Localisation en cours…', 1500);
+  navigator.geolocation.getCurrentPosition(
+    pos => sendSOS(pos.coords.latitude, pos.coords.longitude),
+    () => { const c = map.getCenter(); sendSOS(c.lat, c.lng); },
+    {enableHighAccuracy:true, timeout:6000}
+  );
+});
+
+// ---------- export / merge reports ----------
+$('exportBtn').addEventListener('click', ()=>{
+  if (!reports.length){ toast('Aucun signalement — ajoutes-en d’abord.'); return; }
+  const blob = new Blob([JSON.stringify(reports, null, 1)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'luciole-reports-' + new Date().toISOString().slice(0,10) + '.json';
+  a.click();
+  URL.revokeObjectURL(a.href);
+  toast(reports.length + ' signalements exportés — envoie le fichier à ta coéquipière.');
+});
+$('importBtn').addEventListener('click', ()=>$('importFile').click());
+$('importFile').addEventListener('change', e=>{
+  const f = e.target.files[0];
+  if (!f) return;
+  const reader = new FileReader();
+  reader.onload = ()=>{
+    try {
+      const incoming = JSON.parse(reader.result);
+      if (!Array.isArray(incoming)) throw new Error('bad format');
+      let added = 0;
+      for (const r of incoming){
+        if (!r || !REPORT_META[r.type] || typeof r.lat!=='number' || typeof r.lng!=='number') continue;
+        const dup = reports.some(x => x.type===r.type && Math.abs(x.lat-r.lat)<1e-6 && Math.abs(x.lng-r.lng)<1e-6);
+        if (!dup){ reports.push({type:r.type, lat:r.lat, lng:r.lng, at:r.at||Date.now()}); added++; }
+      }
+      localStorage.setItem('luciole_reports', JSON.stringify(reports));
+      renderReports(); rescoreAndRender();
+      if (lastRoute) computeRoute();
+      toast(added + ' nouveaux signalements fusionnés (' + reports.length + ' au total).');
+    } catch(_){ toast('Impossible de lire ce fichier — est-ce un export Luciole?'); }
+    e.target.value = '';
+  };
+  reader.readAsText(f);
+});
+
+renderReports();
+status('Zoome sur ton quartier, puis appuie sur « Charger l’éclairage de cette zone ».');
+</script>
+</body>
+</html>
